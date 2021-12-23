@@ -181,9 +181,17 @@ def extract_data(data, date_limit, issue_type='issues'):
             last_date = date
     return df, issue_total, issue_count, start_cursor, last_date
 
+def process_comments_from_file(repository, accounts, date, min_comments, max_comments, path):
+    comments = pandas.read_csv(path, quotechar='"', escapechar='\\')
+    comments = comments[comments['repo_id']==int(repository)].drop(columns=['repo_id'])
+    comments['body'] = comments['body'].astype(str)
+    return comments
 
-def process_comments(repository, accounts, date, min_comments, max_comments, apikey):
+def process_comments(repository, accounts, date, min_comments, max_comments, apikey, path):
     comments = pandas.DataFrame()
+    if path != '':
+        comments = process_comments_from_file(repository, accounts, date, min_comments, max_comments, path)
+        return comments
     pr = True
     issue = True
     beforePr = None
@@ -358,13 +366,13 @@ def run_function_in_thread(pbar, function, max_value, args=[], kwargs={}):
     return ret[0]
 
 
-def progress(repository, accounts, exclude, date, verbose, min_comments, max_comments, apikey, output_type, only_predicted):
+def progress(repository, accounts, exclude, date, verbose, min_comments, max_comments, apikey, output_type, only_predicted, path):
     download_progress = tqdm(
         total=25, desc='Downloading comments', smoothing=.1,
         bar_format='{desc}: {percentage:3.0f}%|{bar}', leave=False)
     comments = run_function_in_thread(
         download_progress, process_comments, 25,
-        args=[repository, accounts, date, min_comments, max_comments, apikey])
+        args=[repository, accounts, date, min_comments, max_comments, apikey, path])
     download_progress.close()
 
     if comments is None:
@@ -479,6 +487,7 @@ predict the type of accounts. At least 10 comments is required for each account.
     if output_type == 'json':
         return (result.reset_index().to_json(orient='records'))
     elif output_type == 'csv':
+        result.to_csv(f"{'-'.join(repository.split('/'))}.csv")
         return (result.to_csv())
     else:
         return (result)
@@ -507,14 +516,17 @@ def arg_parser():
         '--min-comments', type=int, required=False, default=10,
         help='Minimum number of comments to analyze an account')
     parser.add_argument(
-        '--max-comments', type=int, required=False, default=100,
+        '--max-comments', type=int, required=False, default=1000000,
         help='Maximum number of comments to be used (default=100)')
     parser.add_argument(
-        '--key', metavar='APIKEY', required=True, type=str, default='',
+        '--key', metavar='APIKEY', required=False, type=str, default='',
         help='GitHub APIv4 key to download comments from GitHub GraphQL API')
     parser.add_argument(
         '--only-predicted', action="store_false", required=False, default=True,
         help='Only list accounts that the prediction is available.')
+    parser.add_argument(
+        '--path', required=False, default='',
+        help='Path to comment file (used instead of downloading comment from API)')
     
     group2 = parser.add_mutually_exclusive_group()
     group2.add_argument('--text', action='store_true', help='Print results as text.')
@@ -537,11 +549,12 @@ def cli():
         min_comments = args.min_comments
         max_comments = args.max_comments
 
-    if args.key == '' or len(args.key) < 35:
-        sys.exit('A GitHub personal access token is required to start the process. \
-Please read more about it in the repository readme file.')
-    else:
-        apikey = args.key
+#     if args.key == '' or len(args.key) < 35:
+#         sys.exit('A GitHub personal access token is required to start the process. \
+# Please read more about it in the repository readme file.')
+#     else:
+#         apikey = args.key
+    apikey = args.key
 
     if args.csv:
         output_type = 'csv'
@@ -564,6 +577,7 @@ Please read more about it in the repository readme file.')
                     apikey,
                     output_type,
                     args.only_predicted,
+                    args.path,
                 ))
     except BodeghaError as e:
         sys.exit(e)
